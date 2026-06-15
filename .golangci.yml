@@ -1,0 +1,65 @@
+version: "2"
+linters:
+  default: all
+  disable:
+    - unused
+    - wsl
+    - depguard
+    - containedctx
+    - godox
+    - exhaustruct
+    - wrapcheck
+    - cyclop
+    - err113
+    - funlen
+    - varnamelen
+    - musttag
+    - tagliatelle
+    - ireturn
+    - gochecknoglobals
+    - paralleltest
+    - testpackage
+    - mnd
+    - nlreturn
+    - lll
+    - inamedparam
+    - godot
+    - zerologlint
+    - interfacebloat
+    - gocritic
+    - funcorder
+    - forbidigo
+    - perfsprint
+    - tagalign
+    - contextcheck
+    - errchkjson
+    - errorlint
+    - gomoddirectives
+    - dupl
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofmt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/taskmarket)
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

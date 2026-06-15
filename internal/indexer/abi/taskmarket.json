@@ -1,0 +1,99 @@
+[
+  {
+    "type": "event",
+    "name": "TaskCreated",
+    "inputs": [
+      { "name": "taskId",       "type": "uint256", "indexed": true  },
+      { "name": "client",       "type": "address", "indexed": true  },
+      { "name": "reward",       "type": "uint256", "indexed": false },
+      { "name": "deadline",     "type": "uint256", "indexed": false },
+      { "name": "metadataHash", "type": "bytes32", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TaskAssigned",
+    "inputs": [
+      { "name": "taskId",   "type": "uint256", "indexed": true },
+      { "name": "executor", "type": "address", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TaskStatusChanged",
+    "inputs": [
+      { "name": "taskId",    "type": "uint256", "indexed": true  },
+      { "name": "oldStatus", "type": "uint8",   "indexed": false },
+      { "name": "newStatus", "type": "uint8",   "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "CompletionConfirmed",
+    "inputs": [
+      { "name": "taskId",            "type": "uint256", "indexed": true  },
+      { "name": "confirmer",         "type": "address", "indexed": true  },
+      { "name": "clientConfirmed",   "type": "bool",    "indexed": false },
+      { "name": "executorConfirmed", "type": "bool",    "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TaskCompleted",
+    "inputs": [
+      { "name": "taskId",   "type": "uint256", "indexed": true  },
+      { "name": "executor", "type": "address", "indexed": true  },
+      { "name": "payout",   "type": "uint256", "indexed": false },
+      { "name": "fee",      "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TaskCancelled",
+    "inputs": [
+      { "name": "taskId", "type": "uint256", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TaskDisputed",
+    "inputs": [
+      { "name": "taskId",     "type": "uint256", "indexed": true },
+      { "name": "disputedBy", "type": "address", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "DisputeResolved",
+    "inputs": [
+      { "name": "taskId",         "type": "uint256", "indexed": true  },
+      { "name": "resolvedBy",     "type": "address", "indexed": true  },
+      { "name": "clientRefund",   "type": "uint256", "indexed": false },
+      { "name": "executorPayout", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "FeeBpsUpdated",
+    "inputs": [
+      { "name": "oldBps", "type": "uint256", "indexed": false },
+      { "name": "newBps", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "FeeRecipientUpdated",
+    "inputs": [
+      { "name": "oldRecipient", "type": "address", "indexed": true },
+      { "name": "newRecipient", "type": "address", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "Withdrawn",
+    "inputs": [
+      { "name": "recipient", "type": "address", "indexed": true  },
+      { "name": "amount",    "type": "uint256", "indexed": false }
+    ]
+  }
+]
