@@ -6,11 +6,11 @@ Go service that listens to `TaskMarketplace` contract events on one or more EVM 
 
 ```
 cmd/main.go
-└── config.Load()          — env vars → Config (DATABASE_URL, POLLING_INTERVAL_MS)
-└── db.Connect()           — GORM + postgres
-└── config.LoadChains()    — reads enabled rows from the chain_config table
-└── indexer.New()          — parses ABI, builds one ChainIndexer per chain
-    └── MultiIndexer.Run() — errgroup, one goroutine per chain
+└── config.Load()          : env vars → Config (DATABASE_URL, POLLING_INTERVAL_MS)
+└── db.Connect()           : GORM + postgres
+└── config.LoadChains()    : reads enabled rows from the chain_config table
+└── indexer.New()          : parses ABI, builds one ChainIndexer per chain
+    └── MultiIndexer.Run() : errgroup, one goroutine per chain
         └── ChainIndexer.run()
             └── poll loop (every POLLING_INTERVAL_MS ms)
                 └── eventHandler.filterLogs() × 10 events
@@ -23,14 +23,14 @@ Each chain tracks its progress in the `indexer_state` table. On restart, the las
 
 | Event | DB operation |
 |---|---|
-| `TaskCreated` | `UpsertTaskCreated` — insert task row |
-| `TaskAssigned` | `UpdateTaskAssigned` — set executor, status → ASSIGNED |
-| `TaskStatusChanged` | `UpdateTaskStatus` — sync status enum |
-| `CompletionConfirmed` | `UpdateConfirmations` — set client/executor confirmed flags |
-| `TaskCompleted` | `UpdateTaskCompleted` — store payout and fee amounts |
-| `TaskDisputed` | `UpdateTaskDisputed` — store disputing address |
-| `DisputeResolved` | `UpdateDisputeResolved` — store client refund / executor payout split |
-| `Withdrawn` | `RecordWithdrawal` — insert withdrawal row |
+| `TaskCreated` | `UpsertTaskCreated`: insert task row |
+| `TaskAssigned` | `UpdateTaskAssigned`: set executor, status → ASSIGNED |
+| `TaskStatusChanged` | `UpdateTaskStatus`: sync status enum |
+| `CompletionConfirmed` | `UpdateConfirmations`: set client/executor confirmed flags |
+| `TaskCompleted` | `UpdateTaskCompleted`: store payout and fee amounts |
+| `TaskDisputed` | `UpdateTaskDisputed`: store disputing address |
+| `DisputeResolved` | `UpdateDisputeResolved`: store client refund / executor payout split |
+| `Withdrawn` | `RecordWithdrawal`: insert withdrawal row |
 | `FeeBpsUpdated` | log only |
 | `FeeRecipientUpdated` | log only |
 
@@ -38,7 +38,7 @@ Each chain tracks its progress in the `indexer_state` table. On restart, the las
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | — | PostgreSQL DSN, e.g. `postgres://user:pass@localhost:5432/taskmarket` (required) |
+| `DATABASE_URL` | n/a | PostgreSQL DSN, e.g. `postgres://user:pass@localhost:5432/taskmarket` (required) |
 | `POLLING_INTERVAL_MS` | `5000` | Poll interval in milliseconds |
 
 ## Chain configuration
@@ -55,7 +55,7 @@ all rows where `enabled = true`, ordered by `chain_id`. Each row requires:
 | `start_block` | Block to start indexing from if no `indexer_state` row exists yet |
 | `enabled` | Set to `false` to stop indexing a chain without deleting its config |
 
-At least one enabled chain is required — the indexer exits with an error if
+At least one enabled chain is required. The indexer exits with an error if
 the table is empty or has no enabled rows. Toggling `enabled` or editing a
 row takes effect on the next restart (no hot reload).
 
@@ -63,7 +63,7 @@ Example: enable a chain via `psql`:
 
 ```sql
 INSERT INTO chain_config (chain_id, rpc_url, contract_address, start_block, enabled, updated_at)
-VALUES (11155111, 'https://ethereum-sepolia-rpc.publicnode.com', '0xeb605C381323597825999ed48595A4CFCccBbaA0', 11018976, true, NOW())
+VALUES (11155111, 'https://ethereum-sepolia-rpc.publicnode.com', '0x84c68038f4524C84ECF7c0EB3CF0bceD3ADCB152', 11119226, true, NOW())
 ON CONFLICT (chain_id) DO UPDATE SET enabled = true;
 ```
 
@@ -97,4 +97,4 @@ go test ./...
 golangci-lint run ./...
 ```
 
-Tests use `go-sqlmock` — no real database required.
+Tests use `go-sqlmock`, so no real database is required.

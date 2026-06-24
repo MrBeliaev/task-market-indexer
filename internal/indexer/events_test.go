@@ -62,7 +62,7 @@ func newTestHandler(t *testing.T) (*eventHandler, sqlmock.Sqlmock) {
 
 	return &eventHandler{
 		contractABI:  contractABI,
-		contractAddr: common.HexToAddress("0xeb605C381323597825999ed48595A4CFCccBbaA0"),
+		contractAddr: common.HexToAddress("0xfaD6d58168C0e3387Ac9B4A70818a84dBA6c2b78"),
 		gdb:          gdb,
 	}, mock
 }
@@ -409,7 +409,8 @@ func TestHandleDisputeResolved_OK(t *testing.T) {
 
 	clientRefund := big.NewInt(500_000_000_000_000_000)
 	executorPayout := big.NewInt(500_000_000_000_000_000)
-	data := packEventData(t, h.contractABI, "DisputeResolved", clientRefund, executorPayout)
+	fee := big.NewInt(25_000_000_000_000_000)
+	data := packEventData(t, h.contractABI, "DisputeResolved", clientRefund, executorPayout, fee)
 	log := makeLog(h.contractABI, "DisputeResolved", []common.Hash{
 		common.BigToHash(big.NewInt(1)),
 		common.BytesToHash(common.HexToAddress("0xadmin").Bytes()),
@@ -428,7 +429,8 @@ func TestHandleDisputeResolved_NotFound(t *testing.T) {
 
 	clientRefund := big.NewInt(1_000_000_000_000_000_000)
 	executorPayout := big.NewInt(0)
-	data := packEventData(t, h.contractABI, "DisputeResolved", clientRefund, executorPayout)
+	fee := big.NewInt(25_000_000_000_000_000)
+	data := packEventData(t, h.contractABI, "DisputeResolved", clientRefund, executorPayout, fee)
 	log := makeLog(h.contractABI, "DisputeResolved", []common.Hash{
 		common.BigToHash(big.NewInt(99)),
 		common.BytesToHash(common.HexToAddress("0xadmin").Bytes()),

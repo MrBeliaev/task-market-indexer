@@ -292,6 +292,24 @@ func UpdateDisputeResolved(
 	return nil
 }
 
+// UpdateTaskDeadline updates the deadline field from a DeadlineExtended event.
+func UpdateTaskDeadline(ctx context.Context, db *gorm.DB, chainID, onChainID int64, newDeadline time.Time) error {
+	result := db.WithContext(ctx).
+		Table("tasks").
+		Where("chain_id = ? AND on_chain_id = ?", chainID, onChainID).
+		Updates(map[string]interface{}{
+			"deadline":   newDeadline,
+			"updated_at": gorm.Expr("NOW()"),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("UpdateTaskDeadline chain=%d id=%d: %w", chainID, onChainID, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // RecordWithdrawal inserts a row for each Withdrawn event.
 func RecordWithdrawal(
 	ctx context.Context,

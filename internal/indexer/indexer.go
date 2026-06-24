@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -23,9 +24,20 @@ var abiJSON []byte
 
 const maxBlockRange uint64 = 1000
 
-// MultiIndexer runs one ChainIndexer per configured chain concurrently.
+// runningChain tracks an active ChainIndexer goroutine.
+type runningChain struct {
+	cfg    db.ChainConfig
+	cancel context.CancelFunc
+	done   <-chan struct{}
+}
+
+// MultiIndexer manages ChainIndexers dynamically, reconciling with the DB on a timer.
 type MultiIndexer struct {
-	chains []*ChainIndexer
+	cfg         *config.Config
+	gdb         *gorm.DB
+	contractABI abi.ABI
+	mu          sync.Mutex
+	active      map[int64]*runningChain
 }
 
 // ChainIndexer handles polling for a single EVM chain.
@@ -37,47 +49,166 @@ type ChainIndexer struct {
 	pollMs  int
 }
 
-// New parses the shared ABI once and constructs a ChainIndexer for each chain.
-func New(cfg *config.Config, dbChains []db.ChainConfig, gdb *gorm.DB) (*MultiIndexer, error) {
+// New parses the shared ABI and initialises the MultiIndexer.
+// Chains are loaded from the database on the first Run call.
+func New(cfg *config.Config, gdb *gorm.DB) (*MultiIndexer, error) {
 	contractABI, err := abi.JSON(strings.NewReader(string(abiJSON)))
 	if err != nil {
 		return nil, fmt.Errorf("parse ABI: %w", err)
 	}
-
-	chains := make([]*ChainIndexer, 0, len(dbChains))
-	for _, chain := range dbChains {
-		chains = append(chains, &ChainIndexer{
-			chain: chain,
-			gdb:   gdb,
-			handler: &eventHandler{
-				contractABI:  contractABI,
-				contractAddr: common.HexToAddress(chain.ContractAddress),
-				gdb:          gdb,
-			},
-			logger: slog.With(
-				"chain_id", chain.ChainID,
-				"contract", chain.ContractAddress,
-			),
-			pollMs: cfg.PollIntervalMs,
-		})
-	}
-	return &MultiIndexer{chains: chains}, nil
+	return &MultiIndexer{
+		cfg:         cfg,
+		gdb:         gdb,
+		contractABI: contractABI,
+		active:      make(map[int64]*runningChain),
+	}, nil
 }
 
-// Run starts all chain indexers concurrently.
-// If any chain returns a non-context error, the whole group is cancelled.
+// Run performs an initial reconcile then re-reconciles on every ChainReloadIntervalMs.
+// Blocks until ctx is cancelled; cleans up all goroutines before returning.
 func (m *MultiIndexer) Run(ctx context.Context) error {
-	g, gCtx := errgroup.WithContext(ctx)
-	for _, ci := range m.chains {
-		g.Go(func() error {
-			ci.logger.Info("chain indexer starting",
-				"rpc", ci.chain.RPCURL,
-				"start_block", ci.chain.StartBlock,
-			)
-			return ci.run(gCtx)
-		})
+	m.reconcile(ctx)
+
+	ticker := time.NewTicker(time.Duration(m.cfg.ChainReloadIntervalMs) * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			m.stopAll()
+			return ctx.Err()
+		case <-ticker.C:
+			m.reconcile(ctx)
+		}
 	}
-	return g.Wait()
+}
+
+// reconcile loads enabled chains from DB and starts/stops indexers to match.
+func (m *MultiIndexer) reconcile(ctx context.Context) {
+	chains, err := db.LoadEnabledChains(ctx, m.gdb)
+	if err != nil {
+		slog.Error("reconcile: failed to load chains", "error", err)
+		return
+	}
+
+	// Build validated enabled set.
+	enabled := make(map[int64]db.ChainConfig, len(chains))
+	for _, c := range chains {
+		if err := config.ValidateChain(c); err != nil {
+			slog.Warn("reconcile: skipping invalid chain config", "chain_id", c.ChainID, "error", err)
+			continue
+		}
+		enabled[c.ChainID] = c
+	}
+
+	if len(enabled) == 0 {
+		slog.Warn("reconcile: no enabled chains in DB")
+	}
+
+	var toCancel []context.CancelFunc
+	var toWait  []<-chan struct{}
+	var toStart []db.ChainConfig
+
+	m.mu.Lock()
+
+	// Stop chains that were disabled or removed.
+	for id, rc := range m.active {
+		if _, ok := enabled[id]; !ok {
+			slog.Info("reconcile: stopping chain indexer", "chain_id", id)
+			toCancel = append(toCancel, rc.cancel)
+			toWait = append(toWait, rc.done)
+			// Pre-remove so the goroutine's deferred cleanup is a no-op.
+			delete(m.active, id)
+		}
+	}
+
+	// Start new chains; restart chains whose config changed.
+	for id, chain := range enabled {
+		existing, running := m.active[id]
+		if running {
+			if existing.cfg.RPCURL == chain.RPCURL &&
+				existing.cfg.ContractAddress == chain.ContractAddress &&
+				existing.cfg.StartBlock == chain.StartBlock {
+				continue // nothing changed
+			}
+			slog.Info("reconcile: chain config changed, restarting", "chain_id", id)
+			toCancel = append(toCancel, existing.cancel)
+			toWait = append(toWait, existing.done)
+			delete(m.active, id)
+		}
+		toStart = append(toStart, chain)
+	}
+
+	m.mu.Unlock()
+
+	// Cancel and wait outside the lock to avoid deadlock with goroutine cleanups.
+	for _, cancel := range toCancel {
+		cancel()
+	}
+	for _, done := range toWait {
+		<-done
+	}
+
+	if len(toStart) > 0 {
+		m.mu.Lock()
+		for _, chain := range toStart {
+			m.startChainLocked(ctx, chain)
+		}
+		m.mu.Unlock()
+	}
+}
+
+// startChainLocked starts a ChainIndexer goroutine. Caller must hold m.mu.
+func (m *MultiIndexer) startChainLocked(ctx context.Context, chain db.ChainConfig) {
+	ciCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	ci := &ChainIndexer{
+		chain: chain,
+		gdb:   m.gdb,
+		handler: &eventHandler{
+			contractABI:  m.contractABI,
+			contractAddr: common.HexToAddress(chain.ContractAddress),
+			gdb:          m.gdb,
+		},
+		logger: slog.With("chain_id", chain.ChainID, "contract", chain.ContractAddress),
+		pollMs: m.cfg.PollIntervalMs,
+	}
+
+	m.active[chain.ChainID] = &runningChain{cfg: chain, cancel: cancel, done: done}
+
+	go func() {
+		defer close(done)
+		defer func() {
+			// Remove from active only if this is still our entry (not already replaced).
+			m.mu.Lock()
+			if entry, ok := m.active[chain.ChainID]; ok && entry.done == done {
+				delete(m.active, chain.ChainID)
+			}
+			m.mu.Unlock()
+		}()
+
+		ci.logger.Info("chain indexer starting", "rpc", chain.RPCURL, "start_block", chain.StartBlock)
+		if err := ci.run(ciCtx); err != nil && err != context.Canceled {
+			ci.logger.Error("chain indexer exited with error", "error", err)
+		} else {
+			ci.logger.Info("chain indexer stopped")
+		}
+	}()
+}
+
+// stopAll cancels all running indexers and waits for them to finish.
+func (m *MultiIndexer) stopAll() {
+	m.mu.Lock()
+	var toWait []<-chan struct{}
+	for _, rc := range m.active {
+		rc.cancel()
+		toWait = append(toWait, rc.done)
+	}
+	m.mu.Unlock()
+	for _, done := range toWait {
+		<-done
+	}
 }
 
 // run connects to the chain RPC and polls until ctx is cancelled,
@@ -247,6 +378,11 @@ func (ci *ChainIndexer) poll(ctx context.Context, client *ethclient.Client) erro
 	})
 	g.Go(func() error {
 		_, err := ci.handler.handleFeeRecipientUpdated(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
+		return err
+	})
+	g.Go(func() error {
+		n, err := ci.handler.handleDeadlineExtended(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
+		res.eventsUpdated += n
 		return err
 	})
 

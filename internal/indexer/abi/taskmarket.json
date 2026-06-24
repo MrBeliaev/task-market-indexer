@@ -64,12 +64,22 @@
   },
   {
     "type": "event",
+    "name": "DeadlineExtended",
+    "inputs": [
+      { "name": "taskId",      "type": "uint256", "indexed": true  },
+      { "name": "oldDeadline", "type": "uint256", "indexed": false },
+      { "name": "newDeadline", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
     "name": "DisputeResolved",
     "inputs": [
       { "name": "taskId",         "type": "uint256", "indexed": true  },
       { "name": "resolvedBy",     "type": "address", "indexed": true  },
       { "name": "clientRefund",   "type": "uint256", "indexed": false },
-      { "name": "executorPayout", "type": "uint256", "indexed": false }
+      { "name": "executorPayout", "type": "uint256", "indexed": false },
+      { "name": "fee",            "type": "uint256", "indexed": false }
     ]
   },
   {

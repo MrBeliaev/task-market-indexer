@@ -33,25 +33,15 @@ func main() {
 	}
 	defer db.Close(gdb)
 
-	chains, err := config.LoadChains(ctx, gdb)
-	if err != nil {
-		slog.Error("config error", "error", err)
-		os.Exit(1)
-	}
-
-	idx, err := indexer.New(cfg, chains, gdb)
+	idx, err := indexer.New(cfg, gdb)
 	if err != nil {
 		slog.Error("indexer init failed", "error", err)
 		os.Exit(1)
 	}
 
-	chainIDs := make([]int64, 0, len(chains))
-	for _, c := range chains {
-		chainIDs = append(chainIDs, c.ChainID)
-	}
-	slog.Info("TaskMarket Go indexer starting",
-		"chains", chainIDs,
+	slog.Info("TaskMarket indexer starting",
 		"poll_ms", cfg.PollIntervalMs,
+		"chain_reload_ms", cfg.ChainReloadIntervalMs,
 	)
 
 	if err := idx.Run(ctx); err != nil && err != context.Canceled {

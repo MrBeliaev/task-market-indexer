@@ -362,7 +362,7 @@ func (h *eventHandler) handleTaskDisputed(
 }
 
 // handleDisputeResolved stores the client/executor split from a DisputeResolved event.
-// Topics[1] taskId, Topics[2] resolvedBy; Data: clientRefund, executorPayout
+// Topics[1] taskId, Topics[2] resolvedBy; Data: clientRefund, executorPayout, fee
 func (h *eventHandler) handleDisputeResolved(
 	ctx context.Context,
 	client ethereum.LogFilterer,
@@ -377,6 +377,7 @@ func (h *eventHandler) handleDisputeResolved(
 	type nonIndexed struct {
 		ClientRefund   *big.Int
 		ExecutorPayout *big.Int
+		Fee            *big.Int
 	}
 
 	processed := 0
@@ -499,6 +500,57 @@ func (h *eventHandler) handleFeeBpsUpdated(
 			"block", log.BlockNumber,
 		)
 		processed++
+	}
+	return processed, nil
+}
+
+// handleDeadlineExtended processes DeadlineExtended events and updates the task deadline in DB.
+// Topics[1] taskId; Data: oldDeadline, newDeadline
+func (h *eventHandler) handleDeadlineExtended(
+	ctx context.Context,
+	client ethereum.LogFilterer,
+	chainID int64,
+	from, to uint64,
+) (int, error) {
+	logs, err := h.filterLogs(ctx, client, "DeadlineExtended", from, to)
+	if err != nil {
+		return 0, err
+	}
+
+	type nonIndexed struct {
+		OldDeadline *big.Int
+		NewDeadline *big.Int
+	}
+
+	processed := 0
+	for _, log := range logs {
+		if len(log.Topics) < 2 {
+			continue
+		}
+		var d nonIndexed
+		if err := h.contractABI.UnpackIntoInterface(&d, "DeadlineExtended", log.Data); err != nil {
+			return processed, fmt.Errorf("unpack DeadlineExtended: %w", err)
+		}
+
+		taskID := new(big.Int).SetBytes(log.Topics[1].Bytes()).Int64()
+		newDeadline := time.Unix(d.NewDeadline.Int64(), 0).UTC()
+
+		if err := db.UpdateTaskDeadline(ctx, h.gdb, chainID, taskID, newDeadline); err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				slog.Warn("DeadlineExtended: task not in DB, skipping",
+					"chain", chainID, "id", taskID)
+				continue
+			}
+			return processed, err
+		}
+		slog.Debug("DeadlineExtended",
+			"chain", chainID, "id", taskID,
+			"new_deadline", newDeadline, "block", log.BlockNumber,
+		)
+		processed++
+	}
+	if processed > 0 {
+		slog.Info("processed DeadlineExtended", "chain", chainID, "count", processed, "from", from, "to", to)
 	}
 	return processed, nil
 }
