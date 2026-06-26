@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -330,48 +331,55 @@ func (ci *ChainIndexer) poll(ctx context.Context, client *ethclient.Client) erro
 		lag:  currentBlock - toBlock,
 	}
 
+	// TaskCreated must commit before any handler that mutates an existing task
+	// row. If a task is created and assigned (or its status changes) within the
+	// same block batch, running them in parallel can let the update fire before
+	// the row exists, dropping it as ErrNotFound. Process creations first, then
+	// fan out the remaining handlers in parallel.
+	created, err := ci.handler.handleTaskCreated(ctx, client, ci.chain.ChainID, fromBlock, toBlock)
+	if err != nil {
+		return fmt.Errorf("event processing [%d-%d]: %w", fromBlock, toBlock, err)
+	}
+	res.eventsCreated = created
+
+	// updated is written from multiple goroutines, so it must be atomic.
+	var updated atomic.Int64
 	g, gCtx := errgroup.WithContext(ctx)
 
-	g.Go(func() error {
-		n, err := ci.handler.handleTaskCreated(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsCreated += n
-		return err
+	runUpdate := func(fn func(context.Context, int64, uint64, uint64) (int, error)) {
+		g.Go(func() error {
+			n, err := fn(gCtx, ci.chain.ChainID, fromBlock, toBlock)
+			updated.Add(int64(n))
+			return err
+		})
+	}
+
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleTaskAssigned(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleTaskAssigned(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleTaskStatusChanged(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleTaskStatusChanged(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleCompletionConfirmed(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleCompletionConfirmed(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleTaskCompleted(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleTaskCompleted(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleTaskDisputed(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleTaskDisputed(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleDisputeResolved(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleDisputeResolved(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleWithdrawn(c, client, id, f, t)
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleWithdrawn(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
+	runUpdate(func(c context.Context, id int64, f, t uint64) (int, error) {
+		return ci.handler.handleDeadlineExtended(c, client, id, f, t)
 	})
+
+	// Fee events touch no task row; their counts are not tracked.
 	g.Go(func() error {
 		_, err := ci.handler.handleFeeBpsUpdated(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
 		return err
@@ -380,15 +388,11 @@ func (ci *ChainIndexer) poll(ctx context.Context, client *ethclient.Client) erro
 		_, err := ci.handler.handleFeeRecipientUpdated(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
 		return err
 	})
-	g.Go(func() error {
-		n, err := ci.handler.handleDeadlineExtended(gCtx, client, ci.chain.ChainID, fromBlock, toBlock)
-		res.eventsUpdated += n
-		return err
-	})
 
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("event processing [%d-%d]: %w", fromBlock, toBlock, err)
 	}
+	res.eventsUpdated = int(updated.Load())
 
 	if err := db.SetLastBlock(ctx, ci.gdb, ci.chain.ChainID, toBlock); err != nil {
 		return err
