@@ -1,0 +1,22 @@
+name: Indexer CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      - run: go test -race ./...
